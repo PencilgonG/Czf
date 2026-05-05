@@ -121,10 +121,37 @@ async function getRanked(puuid, cache) {
 }
 
 async function getMatchIds(puuid) {
-  const solo = await riotGet(`https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?queue=420&start=0&count=${MAX_GAMES}&startTime=${SEASON_START}`) || [];
-  if (solo.length >= 10) return solo;
-  const flex = await riotGet(`https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?queue=440&start=0&count=${MAX_GAMES - solo.length}&startTime=${SEASON_START}`) || [];
-  return [...solo, ...flex];
+  let ids   = [];
+  let start = 0;
+  const batchSize = 100; // Max autorise par Riot
+
+  // Paginer jusqu'a avoir toutes les parties soloQ
+  while (true) {
+    const batch = await riotGet(
+      `https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids`
+      + `?queue=420&start=${start}&count=${batchSize}&startTime=${SEASON_START}`
+    ) || [];
+    ids = ids.concat(batch);
+    if (batch.length < batchSize) break; // Plus de pages
+    start += batchSize;
+  }
+
+  // Completer avec du flex si peu de soloQ
+  if (ids.length < 20) {
+    let flexStart = 0;
+    while (true) {
+      const batch = await riotGet(
+        `https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids`
+        + `?queue=440&start=${flexStart}&count=${batchSize}&startTime=${SEASON_START}`
+      ) || [];
+      ids = ids.concat(batch);
+      if (batch.length < batchSize) break;
+      flexStart += batchSize;
+    }
+  }
+
+  console.log(`${ids.length} parties trouvees au total`);
+  return ids;
 }
 
 async function getMatch(matchId) {
