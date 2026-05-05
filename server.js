@@ -11,13 +11,17 @@ const PORT = process.env.PORT || 3000;
 const RIOT_API_KEY      = process.env.RIOT_API_KEY;
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_APP_ID    = process.env.DISCORD_APP_ID;
+const DISCORD_WEBHOOK_SCORES = process.env.DISCORD_WEBHOOK_SCORES || '';
 const SECRET_KEY        = process.env.SECRET_KEY || 'czf-secret-2025';
 const CF_ACCOUNT_ID     = process.env.CF_ACCOUNT_ID;
 const CF_KV_NAMESPACE   = process.env.CF_KV_NAMESPACE;
 const CF_KV_TOKEN       = process.env.CF_KV_TOKEN;
 
-const SEASON_START = 1736294400;
-const MAX_GAMES    = 500;  // Toutes les parties de la saison
+// SEASON_START : debut du split actuel (a mettre a jour a chaque nouveau split)
+// Split 1 2025 : 9 janvier 2025 = 1736380800
+// Pour changer : modifier SEASON_START dans les variables d'environnement Render
+const SEASON_START = parseInt(process.env.SEASON_START || '1736380800');
+const MAX_GAMES    = 500;
 const PLATFORM     = 'euw1';
 const REGION       = 'europe';
 const DELAY_MS     = 1200;
@@ -546,6 +550,20 @@ async function runAnalysis(gameName, tagLine, interactionToken, jobId) {
 
     const embed  = buildEmbed(result, playerName);
 
+    // 1. Poster via webhook Discord (ne depend pas du token, toujours disponible)
+    if (DISCORD_WEBHOOK_SCORES) {
+      await fetch(DISCORD_WEBHOOK_SCORES, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          content: `Score calcule pour **${playerName}**`,
+          embeds:  [embed]
+        })
+      }).then(r => console.log(`Webhook Discord: ${r.status}`))
+        .catch(e => console.log(`Webhook erreur: ${e.message}`));
+    }
+
+    // 2. Tenter aussi de mettre a jour le message original (peut avoir expire apres 15min)
     if (interactionToken) {
       const dr = await fetch(
         `https://discord.com/api/webhooks/${DISCORD_APP_ID}/${interactionToken}/messages/@original`,
@@ -554,8 +572,8 @@ async function runAnalysis(gameName, tagLine, interactionToken, jobId) {
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bot ${DISCORD_BOT_TOKEN}` },
           body:    JSON.stringify({ embeds: [embed] })
         }
-      );
-      console.log(`Discord update: ${dr.status}`);
+      ).catch(() => null);
+      if (dr) console.log(`Discord interaction update: ${dr.status}`);
     }
 
     const kvData = { playerName, result, embed, updatedAt: new Date().toISOString() };
@@ -630,7 +648,9 @@ app.get('/web/score/:pseudo', async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`CZF Score Bot v4 demarre sur le port ${PORT}`);
-  if (!RIOT_API_KEY)      console.warn('⚠️  RIOT_API_KEY manquante');
-  if (!DISCORD_BOT_TOKEN) console.warn('⚠️  DISCORD_BOT_TOKEN manquante');
-  if (!CF_KV_TOKEN)       console.warn('⚠️  CF_KV_TOKEN manquante (KV desactive)');
+  console.log(`Season start: ${new Date(SEASON_START * 1000).toISOString().substring(0, 10)}`);
+  if (!RIOT_API_KEY)           console.warn('⚠️  RIOT_API_KEY manquante');
+  if (!DISCORD_BOT_TOKEN)      console.warn('⚠️  DISCORD_BOT_TOKEN manquante');
+  if (!DISCORD_WEBHOOK_SCORES) console.warn('⚠️  DISCORD_WEBHOOK_SCORES manquante (webhook desactive)');
+  if (!CF_KV_TOKEN)            console.warn('⚠️  CF_KV_TOKEN manquante (KV desactive)');
 });
