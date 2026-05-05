@@ -644,6 +644,12 @@ async function runAnalysis(gameName, tagLine, interactionToken, jobId) {
 
 app.get('/', (req, res) => res.json({ status: 'CZF Score Bot OK', version: '4.0' }));
 
+// Verification Riot Games API (production key)
+app.get('/riot.txt', (req, res) => {
+  res.type('text/plain');
+  res.send('ff6da291-53b9-44b6-935c-89270f775a79');
+});
+
 app.post('/analyze', async (req, res) => {
   if (req.headers['x-secret-key'] !== SECRET_KEY) return res.status(401).json({ error: 'Unauthorized' });
   const { gameName, tagLine, interactionToken } = req.body;
