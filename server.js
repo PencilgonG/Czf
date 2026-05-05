@@ -17,10 +17,9 @@ const CF_ACCOUNT_ID     = process.env.CF_ACCOUNT_ID;
 const CF_KV_NAMESPACE   = process.env.CF_KV_NAMESPACE;
 const CF_KV_TOKEN       = process.env.CF_KV_TOKEN;
 
-// SEASON_START : debut du split actuel (a mettre a jour a chaque nouveau split)
-// Split 1 2025 : 9 janvier 2025 = 1736380800
-// Pour changer : modifier SEASON_START dans les variables d'environnement Render
-const SEASON_START = parseInt(process.env.SEASON_START || '1736380800');
+// SEASON_START : debut de la saison en cours
+// Season 2026 Split 1 : 9 janvier 2026 = 1767916800
+const SEASON_START = parseInt(process.env.SEASON_START || '1767916800');
 const MAX_GAMES    = 500;
 const PLATFORM     = 'euw1';
 const REGION       = 'europe';
@@ -155,8 +154,8 @@ async function getRanked(puuid, cache) {
 }
 
 async function getMatchIds(puuid) {
-  const ids   = [];
-  let start   = 0;
+  const ids  = [];
+  let start  = 0;
   const batch = 100;
 
   while (true) {
@@ -169,20 +168,28 @@ async function getMatchIds(puuid) {
     start += batch;
   }
 
-  // Verifier les dates des 1eres et dernieres parties
+  if (ids.length < 20) {
+    let flexStart = 0;
+    while (true) {
+      const page = await riotGet(
+        `https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${encodeURIComponent(puuid)}/ids`
+        + `?queue=440&start=${flexStart}&count=${batch}&startTime=${SEASON_START}`
+      ) || [];
+      for (const id of page) ids.push(id);
+      if (page.length < batch) break;
+      flexStart += batch;
+    }
+  }
+
+  // Debug : verifier les dates pour confirmer que le filtre fonctionne
   if (ids.length > 0) {
     const first = await getMatch(ids[0]);
     const last  = await getMatch(ids[ids.length - 1]);
-    if (first?.info) console.log(`Partie la plus recente: ${new Date(first.info.gameCreation).toISOString().substring(0, 10)}`);
+    if (first?.info) console.log(`Partie la plus recente : ${new Date(first.info.gameCreation).toISOString().substring(0, 10)}`);
     if (last?.info)  console.log(`Partie la plus ancienne: ${new Date(last.info.gameCreation).toISOString().substring(0, 10)}`);
   }
 
-  console.log(`${ids.length} parties trouvees (startTime filtre: ${new Date(SEASON_START * 1000).toISOString().substring(0, 10)})`);
-  return ids;
-}
-  }
-
-  console.log(`${ids.length} parties trouvees au total`);
+  console.log(`${ids.length} parties (filtre depuis: ${new Date(SEASON_START * 1000).toISOString().substring(0, 10)})`);
   return ids;
 }
 
