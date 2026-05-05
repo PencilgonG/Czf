@@ -101,12 +101,42 @@ function extractRankInfo(data) {
 // RIOT API
 // ============================================================
 
-async function riotGet(url) {
+async function riotGet(url, retries = 0) {
+  if (retries > 5) { console.log(`Max retries atteint: ${url.substring(0, 80)}`); return null; }
   await sleep(DELAY_MS);
-  const res = await fetch(url, { headers: { 'X-Riot-Token': RIOT_API_KEY } });
-  if (res.status === 429) { await sleep(12000); return riotGet(url); }
-  if (res.status !== 200) { console.log(`API ${res.status}: ${url.substring(0, 80)}`); return null; }
-  return res.json();
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000); // timeout 10s
+    const res = await fetch(url, {
+      headers: { 'X-Riot-Token': RIOT_API_KEY },
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+
+    if (res.status === 429) {
+      console.log('Rate limit - attente 15s...');
+      await sleep(15000);
+      return riotGet(url, retries + 1);
+    }
+    if (res.status === 503 || res.status === 504) {
+      console.log(`Serveur Riot ${res.status} - retry dans 5s...`);
+      await sleep(5000);
+      return riotGet(url, retries + 1);
+    }
+    if (res.status !== 200) {
+      console.log(`API ${res.status}: ${url.substring(0, 80)}`);
+      return null;
+    }
+    return res.json();
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      console.log(`Timeout (${retries + 1}/5) - retry: ${url.substring(0, 80)}`);
+      await sleep(3000);
+      return riotGet(url, retries + 1);
+    }
+    console.log(`Erreur fetch: ${e.message}`);
+    return null;
+  }
 }
 
 async function getAccount(gameName, tagLine) {
@@ -121,37 +151,10 @@ async function getRanked(puuid, cache) {
 }
 
 async function getMatchIds(puuid) {
-  let ids   = [];
-  let start = 0;
-  const batchSize = 100; // Max autorise par Riot
-
-  // Paginer jusqu'a avoir toutes les parties soloQ
-  while (true) {
-    const batch = await riotGet(
-      `https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids`
-      + `?queue=420&start=${start}&count=${batchSize}&startTime=${SEASON_START}`
-    ) || [];
-    ids = ids.concat(batch);
-    if (batch.length < batchSize) break; // Plus de pages
-    start += batchSize;
-  }
-
-  // Completer avec du flex si peu de soloQ
-  if (ids.length < 20) {
-    let flexStart = 0;
-    while (true) {
-      const batch = await riotGet(
-        `https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids`
-        + `?queue=440&start=${flexStart}&count=${batchSize}&startTime=${SEASON_START}`
-      ) || [];
-      ids = ids.concat(batch);
-      if (batch.length < batchSize) break;
-      flexStart += batchSize;
-    }
-  }
-
-  console.log(`${ids.length} parties trouvees au total`);
-  return ids;
+  const solo = await riotGet(`https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?queue=420&start=0&count=${MAX_GAMES}&startTime=${SEASON_START}`) || [];
+  if (solo.length >= 10) return solo;
+  const flex = await riotGet(`https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?queue=440&start=0&count=${MAX_GAMES - solo.length}&startTime=${SEASON_START}`) || [];
+  return [...solo, ...flex];
 }
 
 async function getMatch(matchId) {
@@ -224,10 +227,12 @@ async function collectAll(playerPuuid) {
 
   console.log(`${matches.length} parties analysees. Prefetch lobbies...`);
 
-  // Prefetch rangs de tous les joueurs des lobbies (par batch de 5)
+  // Prefetch rangs de tous les joueurs des lobbies (sequentiel pour respecter le rate limit)
   const allPuuids = [...new Set(matches.flatMap(m => m.allPuuids).filter(p => p !== playerPuuid))];
-  for (let i = 0; i < allPuuids.length; i += 5) {
-    await Promise.all(allPuuids.slice(i, i + 5).map(p => getRanked(p, cache)));
+  console.log(`${allPuuids.length} joueurs uniques a prefetch...`);
+  for (let i = 0; i < allPuuids.length; i++) {
+    await getRanked(allPuuids[i], cache);
+    if (i > 0 && i % 50 === 0) console.log(`Prefetch: ${i}/${allPuuids.length} joueurs...`);
   }
 
   console.log(`Rangs prefetches: ${Object.keys(cache).length} joueurs`);
