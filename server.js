@@ -155,8 +155,8 @@ async function getRanked(puuid, cache) {
 }
 
 async function getMatchIds(puuid) {
-  const ids  = [];
-  let start  = 0;
+  const ids   = [];
+  let start   = 0;
   const batch = 100;
 
   while (true) {
@@ -169,17 +169,17 @@ async function getMatchIds(puuid) {
     start += batch;
   }
 
-  if (ids.length < 20) {
-    let flexStart = 0;
-    while (true) {
-      const page = await riotGet(
-        `https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${encodeURIComponent(puuid)}/ids`
-        + `?queue=440&start=${flexStart}&count=${batch}&startTime=${SEASON_START}`
-      ) || [];
-      for (const id of page) ids.push(id);
-      if (page.length < batch) break;
-      flexStart += batch;
-    }
+  // Verifier les dates des 1eres et dernieres parties
+  if (ids.length > 0) {
+    const first = await getMatch(ids[0]);
+    const last  = await getMatch(ids[ids.length - 1]);
+    if (first?.info) console.log(`Partie la plus recente: ${new Date(first.info.gameCreation).toISOString().substring(0, 10)}`);
+    if (last?.info)  console.log(`Partie la plus ancienne: ${new Date(last.info.gameCreation).toISOString().substring(0, 10)}`);
+  }
+
+  console.log(`${ids.length} parties trouvees (startTime filtre: ${new Date(SEASON_START * 1000).toISOString().substring(0, 10)})`);
+  return ids;
+}
   }
 
   console.log(`${ids.length} parties trouvees au total`);
