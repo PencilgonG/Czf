@@ -149,7 +149,7 @@ async function getAccount(gameName, tagLine) {
 
 async function getRanked(puuid, cache) {
   if (cache[puuid] !== undefined) return cache[puuid];
-  const data = await riotGet(`https://${PLATFORM}.api.riotgames.com/lol/league/v4/entries/by-puuid/${puuid}`) || [];
+  const data = await riotGet(`https://${PLATFORM}.api.riotgames.com/lol/league/v4/entries/by-puuid/${encodeURIComponent(puuid)}`) || [];
   cache[puuid] = data;
   return data;
 }
@@ -157,12 +157,11 @@ async function getRanked(puuid, cache) {
 async function getMatchIds(puuid) {
   const ids  = [];
   let start  = 0;
-  const batch = 100; // Max autorise par Riot
+  const batch = 100;
 
-  // Paginer toutes les parties soloQ de la saison
   while (true) {
     const page = await riotGet(
-      `https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids`
+      `https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${encodeURIComponent(puuid)}/ids`
       + `?queue=420&start=${start}&count=${batch}&startTime=${SEASON_START}`
     ) || [];
     for (const id of page) ids.push(id);
@@ -170,12 +169,11 @@ async function getMatchIds(puuid) {
     start += batch;
   }
 
-  // Completer avec du flex seulement si tres peu de soloQ
   if (ids.length < 20) {
     let flexStart = 0;
     while (true) {
       const page = await riotGet(
-        `https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids`
+        `https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${encodeURIComponent(puuid)}/ids`
         + `?queue=440&start=${flexStart}&count=${batch}&startTime=${SEASON_START}`
       ) || [];
       for (const id of page) ids.push(id);
@@ -562,7 +560,8 @@ async function runAnalysis(gameName, tagLine, interactionToken, jobId) {
   try {
     const account = await getAccount(gameName, tagLine);
     if (!account) throw new Error(`Compte introuvable: ${playerName}`);
-    console.log(`PUUID: ${account.puuid.substring(0, 20)}...`);
+    console.log(`PUUID: ${account.puuid}`);
+    console.log(`GameName retourne: ${account.gameName} | Tag: ${account.tagLine}`);
 
     const { matches, cache } = await collectAll(account.puuid);
     if (!matches || matches.length < 5) throw new Error(`Pas assez de parties (${matches?.length || 0})`);
