@@ -17,10 +17,14 @@ const CF_KV_NAMESPACE   = process.env.CF_KV_NAMESPACE;
 const CF_KV_TOKEN       = process.env.CF_KV_TOKEN;
 
 const SEASON_START = 1736294400;
-const MAX_GAMES    = 20;
+const MAX_GAMES    = 500;  // Toutes les parties de la saison
 const PLATFORM     = 'euw1';
 const REGION       = 'europe';
 const DELAY_MS     = 1200;
+
+// Cache en memoire : 1 analyse par compte (reset si Render redémarre)
+const analysisCache = new Map();
+const TEST_ACCOUNT  = 'pencilgon#gang'; // Seul compte reanalysable a volonte
 
 app.use(express.json());
 app.use((req, res, next) => {
@@ -468,10 +472,33 @@ async function getKV(key) {
 // ============================================================
 
 async function runAnalysis(gameName, tagLine, interactionToken, jobId) {
-  console.log(`=== Analyse: ${gameName}#${tagLine} ===`);
+  const playerKey  = `${gameName}#${tagLine}`.toLowerCase();
+  const playerName = `${gameName}#${tagLine}`;
+  console.log(`=== Analyse: ${playerKey} ===`);
+
+  // Retourner le cache si deja analyse (sauf compte test)
+  if (playerKey !== TEST_ACCOUNT && analysisCache.has(playerKey)) {
+    console.log(`Cache hit: ${playerKey} - renvoi du resultat existant`);
+    const cached = analysisCache.get(playerKey);
+    if (interactionToken) {
+      await fetch(
+        `https://discord.com/api/webhooks/${DISCORD_APP_ID}/${interactionToken}/messages/@original`,
+        {
+          method:  'PATCH',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bot ${DISCORD_BOT_TOKEN}` },
+          body:    JSON.stringify({
+            content: `Score deja calcule pour **${playerName}** — analyse unique par compte.`,
+            embeds:  [cached.embed]
+          })
+        }
+      ).catch(() => {});
+    }
+    return cached;
+  }
+
   try {
     const account = await getAccount(gameName, tagLine);
-    if (!account) throw new Error(`Compte introuvable: ${gameName}#${tagLine}`);
+    if (!account) throw new Error(`Compte introuvable: ${playerName}`);
     console.log(`PUUID: ${account.puuid.substring(0, 20)}...`);
 
     const { matches, cache } = await collectAll(account.puuid);
@@ -481,12 +508,11 @@ async function runAnalysis(gameName, tagLine, interactionToken, jobId) {
     const rankInfo   = extractRankInfo(rankedData);
     console.log(`Rang: ${rankInfo.tier || 'Non classe'} (${rankInfo.mmr} MMR)`);
 
-    const result     = calculate(rankInfo, matches, cache);
+    const result = calculate(rankInfo, matches, cache);
     if (result.error) throw new Error(result.error);
     console.log(`Score: ${result.score} / 20`);
 
-    const playerName = `${gameName}#${tagLine}`;
-    const embed      = buildEmbed(result, playerName);
+    const embed  = buildEmbed(result, playerName);
 
     if (interactionToken) {
       const dr = await fetch(
@@ -501,7 +527,12 @@ async function runAnalysis(gameName, tagLine, interactionToken, jobId) {
     }
 
     const kvData = { playerName, result, embed, updatedAt: new Date().toISOString() };
-    await saveKV(`score:${playerName.toLowerCase()}`, kvData);
+
+    // Sauvegarder dans le cache memoire
+    analysisCache.set(playerKey, kvData);
+    console.log(`Cache sauvegarde pour ${playerKey} (${analysisCache.size} comptes en cache)`);
+
+    await saveKV(`score:${playerKey}`, kvData);
     if (jobId) await saveKV(`job:${jobId}`, { status: 'done', ...kvData });
 
     console.log(`=== Termine: ${playerName} ===`);
@@ -515,7 +546,7 @@ async function runAnalysis(gameName, tagLine, interactionToken, jobId) {
         {
           method:  'PATCH',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bot ${DISCORD_BOT_TOKEN}` },
-          body:    JSON.stringify({ content: `Erreur pour **${gameName}#${tagLine}** : ${err.message}` })
+          body:    JSON.stringify({ content: `Erreur pour **${playerName}** : ${err.message}` })
         }
       ).catch(() => {});
     }
